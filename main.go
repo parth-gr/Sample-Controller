@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 
 	//Go Lang library to send messages to Slack via Incoming Webhooks.
-	"github.com/ashwanthkumar/slack-go-webhook"
+
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
 	"go.uber.org/zap"
@@ -23,31 +25,34 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-var restartList map[string]int32
+var resource map[string]string
 
-type SlackRequestBody struct {
-	Text string `json: "text"`
-}
+// type SlackRequestBody struct {
+// 	Text string `json: "text"`
+// }
 
-func slackNotification(podName *v1.Pod, container string, restartCount int32) {
-	webhookURL := "https://hooks.slack.com/services/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"
+func slackNotification(podName *v1.Pod, container string) {
+	// webhookURL := "https://hooks.slack.com/services/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"
 
-	attachment1 := slack.Attachment{}
-	attachment1.AddField(slack.Field{Title: "Pod Name", Value: podName.Name}).AddField(slack.Field{Title: "Container Name", Value: container})
-	attachment1.AddField(slack.Field{Title: "Restarted", Value: "true"})
-	attachment1.AddAction(slack.Action{Type: "button", Text: "Open Jira", Url: "", Style: "primary"})
-	attachment1.AddAction(slack.Action{Type: "button", Text: "Cancel", Url: "", Style: "danger"})
-	payload := slack.Payload{
-		Text:        "Pod Crash Notification",
-		Username:    "Kube Bot",
-		Channel:     "#kubernetes-demo",
-		IconEmoji:   ":monkey_face",
-		Attachments: []slack.Attachment{attachment1},
+	// attachment1 := slack.Attachment{}
+	// attachment1.AddField(slack.Field{Title: "Pod Name", Value: podName.Name}).AddField(slack.Field{Title: "Container Name", Value: container})
+	// payload := slack.Payload{
+	// 	Text:        "Pod Crash Notification",
+	// 	Username:    "Kube Bot",
+	// 	Channel:     "#kubernetes-demo",
+	// 	IconEmoji:   ":monkey_face",
+	// 	Attachments: []slack.Attachment{attachment1},
+	// }
+	// err := slack.Send(webhookURL, "", payload)
+	// if len(err) > 0 {
+	// 	fmt.Printf("error: %s\n", err)
+	// }
+	slack, err := exec.Command("/bin/sh", "slack.sh").Output()
+	if err != nil {
+		log.Fatal(err)
 	}
-	err := slack.Send(webhookURL, "", payload)
-	if len(err) > 0 {
-		fmt.Printf("error: %s\n", err)
-	}
+	fmt.Println(slack)
+	log.Printf("completed")
 }
 
 //this is controller struct like in Kubebuilder
@@ -69,17 +74,11 @@ func (r *ReconciledPod) Reconcile(ctx context.Context, request reconcile.Request
 		log.Error(err, "Error fetching pod. Going to requeue")
 		return reconcile.Result{Requeue: true}, err
 	}
-
-	for _, v := range pod.Status.ContainerStatuses {
-		container := v.Name
-		restartCount := v.RestartCount
-		identifier := pod.Name + v.Name
-		if _, ok := restartList[identifier]; !ok {
-			restartList[identifier] = restartCount
-		} else if restartList[identifier] < restartCount {
-			log.Info("Reconciling Container: " + container + "Check Slack Notification")
-			slackNotification(pod, container, restartCount)
-		}
+	if _, ok := resource[pod.Name]; !ok {
+		resource[pod.Name] = pod.ResourceVersion
+	} else if pod.ResourceVersion != resource[pod.Name] {
+		log.Info("Reconciling Container: " + pod.Name + "Check Slack Notification")
+		slackNotification(pod, pod.Name)
 	}
 
 	return reconcile.Result{}, nil
@@ -87,7 +86,7 @@ func (r *ReconciledPod) Reconcile(ctx context.Context, request reconcile.Request
 
 func main() {
 	log := zapr.NewLogger(zap.NewExample()).WithName("pod-crash-controller")
-	restartList = make(map[string]int32)
+	resource = make(map[string]string)
 
 	log.Info("Setting up manager")
 	//here we are not setting manager options like passing it a scheme
@@ -120,3 +119,5 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// kill port sudo kill -9 `sudo lsof -t -i:8080`
